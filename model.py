@@ -1,3 +1,4 @@
+from ctypes import alignment
 import torch 
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -18,13 +19,11 @@ class VisionTransformer(nn.Module):
             dropout = 0.1,
             emb_dropout = 0.1
         )
-
         self.linear = nn.Linear(in_features=z_dim, out_features=num_classes)
-
     def forward(self, x):
         x = self.vit(x)
-        x = x.flatten(x)
         x = self.linear(x)
+        x = nn.functional.softmax(x)
         return x
 
 class RandomAugmentation(nn.Module):
@@ -32,7 +31,7 @@ class RandomAugmentation(nn.Module):
         super(RandomAugmentation, self).__init__()
         self.augment = transforms.Compose(
             [
-                transforms.RandomRotation(),
+                transforms.RandomRotation(35),
                 transforms.ColorJitter(),
 
             ]
@@ -50,17 +49,24 @@ class InstanceDiscriminationLoss(nn.Module):
         return -torch.sum(torch.log(predictions))
 
     
-class ContrasiveLearningLoss(nn.Module):
+class ContrastiveLearningLoss(nn.Module):
     def __init__(self):
-        super(ContrasiveLearningLoss, self).__init__()
+        super(ContrastiveLearningLoss, self).__init__()
 
     def forward(self, z_a, z_b):
-        aligment = -torch.sum(torch.dot(z_a.T, z_b))
-        uniformity_loss = 0
         n = len(z_a)
+
+        alignment = 0
         for i in range(n):
+            alignment += -torch.sum(torch.dot(z_a[i].T, z_b[i]))
+        uniformity_loss = 0
+        for i in range(n):
+            negative_sum = 0
+            for j in range(n-1):
+                if i == j:
+                    continue
+                negative_sum += torch.sum(torch.dot(z_a[i].T, z_b[i]))
             
-            negative_sum = torch.sum(torch.dot(z_a[i].T.repeat(n - 1), z_b[:i] + z_b[i+1:]))
-            uniformity = torch.exp(z_a[i].T, z_b[i])
+            uniformity = torch.exp(torch.dot(z_a[i].T, z_b[i]))
             uniformity_loss += negative_sum + uniformity
-        return aligment + uniformity_loss
+        return alignment + uniformity_loss
