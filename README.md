@@ -2,9 +2,8 @@
 
 Dataset: https://www.robots.ox.ac.uk/~vgg/data/flowers/17/
 
-Extract the jpg folder and rename it to data
 
 
 ## Requirements
-torch
+torch </br>
 vit-pytorch
