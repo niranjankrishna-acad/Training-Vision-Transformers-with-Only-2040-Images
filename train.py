@@ -9,6 +9,9 @@ import os
 import pandas as pd
 from torchvision.io import read_image
 import numpy as np
+import datetime
+import time
+import sys
 from model import VisionTransformer, RandomAugmentation, InstanceDiscriminationLoss, ContrastiveLearningLoss
 labels_2_idx = {
     "Buttercup":0,
@@ -51,7 +54,7 @@ class CustomImageDataset(Dataset):
         counter += 1
         img_path = os.path.join(self.img_dir, self.img_labels[idx])
         image = read_image(img_path)
-        label = int(np.floor((counter)/17))
+        label = int(np.floor((counter)/80))
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
@@ -72,7 +75,12 @@ from torch.utils.data import DataLoader
 train_dataloader = DataLoader(train_set, batch_size=64, shuffle=True)
 val_dataloader = DataLoader(val_set, batch_size=64, shuffle=True)
 
-epochs = 32
+def accuracy(output, target):
+    pred = torch.argmax(output, dim=1)
+    return (torch.sum(pred == target))
+
+
+epochs = 512
 
 visionTransformer = nn.DataParallel(VisionTransformer(224, 10, 17))
 visionTransformer.cuda()
@@ -84,12 +92,26 @@ contrastiveLearningLoss = nn.DataParallel(ContrastiveLearningLoss())
 contrastiveLearningLoss.cuda()
 optimizer = torch.optim.AdamW(visionTransformer.parameters(), lr=0.001)
 for epoch in range(epochs):
+    counter = 0
+
+    # training log
+    train_reader_cost = 0.0
+    train_run_cost = 0.0
+    total_samples = 0
+    acc = 0.0
+    reader_start = time.time()
+    batch_past = 0
+    print_freq = 17
+
     aggregate_loss = 0
     for step, batch in enumerate(train_dataloader):
-        
-        batch = batch[0].to(torch.float)
-        predictions = visionTransformer(batch)
-        x_a, x_b = randomAugmentation(batch)
+
+        train_reader_cost += time.time() - reader_start
+        train_start = time.time()
+        image, target =[x.cuda() for x in batch]
+        image = image.to(torch.float)
+        predictions = visionTransformer(image)
+        x_a, x_b = randomAugmentation(image)
         z_embeddings_a = nn.functional.normalize(visionTransformer.module.vit(x_a), dim=1)
         z_embeddings_b =  nn.functional.normalize(visionTransformer.module.vit(x_b), dim=1)
 
@@ -101,6 +123,32 @@ for epoch in range(epochs):
         total_loss.backward()
         aggregate_loss += total_loss.item()
         optimizer.step()
-    torch.save(visionTransformer.state_dict(),"model")
+
+        train_run_cost += time.time() - train_start
+        acc = accuracy(predictions, target).item()
+        total_samples += image.shape[0]
+        batch_past += 1
+
+        if True:
+
+            lr = optimizer.state_dict()['param_groups'][0]['lr']
+
+            msg = "[Epoch {}, iter: {}] acc: {:.5f}, lr: {:.5f}, loss: {:.5f}, avg_reader_cost: {:.5f} sec, avg_batch_cost: {:.5f} sec, avg_samples: {}, avg_ips: {:.5f} images/sec.".format(
+                epoch, step, acc / batch_past,
+                lr,
+                total_loss.item(), train_reader_cost / batch_past,
+                (train_reader_cost + train_run_cost) / batch_past,
+                total_samples / batch_past,
+                total_samples / (train_reader_cost + train_run_cost))
+            print(msg)
+            sys.stdout.flush()
+            train_reader_cost = 0.0
+            train_run_cost = 0.0
+            total_samples = 0
+            acc = 0.0
+            batch_past = 0
+
+        reader_start = time.time()
+
+    torch.save(visionTransformer.state_dict(),"ckpt/model{}.pth".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     print("Total Epoch {} Loss : {}".format(epoch, aggregate_loss/len(train_dataloader)))
-        
