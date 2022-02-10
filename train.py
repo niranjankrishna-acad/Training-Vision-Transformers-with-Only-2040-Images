@@ -81,6 +81,7 @@ def accuracy(output, target):
 
 
 epochs = 512
+os.makedirs("ckpt", exist_ok=True)
 
 visionTransformer = nn.DataParallel(VisionTransformer(224, 10, 17))
 visionTransformer.cuda()
